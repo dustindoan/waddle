@@ -1,0 +1,16 @@
+# dependencies
+node_modules
+
+# output
+dist
+*.tsbuildinfo
+
+# env
+.env
+.env.local
+
+# macOS
+.DS_Store
+
+# bun bundler scratch
+.*.bun-build

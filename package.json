@@ -1,0 +1,17 @@
+{
+  "name": "waddle",
+  "version": "0.1.0",
+  "description": "Photos.app → ente migration orchestrator. Drives osxphotos exports into a staging folder and drains them through duckling, deleting each file on confirmed upload — disk stays bounded by construction.",
+  "private": true,
+  "type": "module",
+  "module": "src/index.ts",
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "build": "bun build --compile --target=bun-darwin-arm64 src/index.ts --outfile dist/waddle",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.9.3"
+  }
+}
