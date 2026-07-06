@@ -59,6 +59,7 @@ interface Totals {
     present: number;
     failed: number;
     skippedAae: number;
+    skippedUnsupported: number;
     chunks: number;
 }
 
@@ -188,6 +189,7 @@ const runSync = async (opts: Options): Promise<void> => {
         present: 0,
         failed: 0,
         skippedAae: 0,
+        skippedUnsupported: 0,
         chunks: 0,
     };
     const attempts = new Map<string, number>();
@@ -223,22 +225,47 @@ const runSync = async (opts: Options): Promise<void> => {
             `waddle: draining ${staged.length} file(s) — ${pairs.length} live pair(s), ${singles.length} single(s)`,
         );
 
+        // ente's UploadResult union (gallery/services/upload/index.ts), by
+        // what the source file's fate should be:
+        //   delete + count uploaded:  uploaded, uploadedWithStaticThumbnail
+        //   delete + count present:   alreadyUploaded (same collection),
+        //                             addedSymlink (content matched in a
+        //                             DIFFERENT collection — ente links it
+        //                             into ours instead of re-uploading;
+        //                             common when re-migrating a library
+        //                             that partially reached ente before)
+        //   delete + count skipped:   unsupported, zeroSize, tooLarge,
+        //                             largerThanAvailableStorage — retrying
+        //                             can never change the answer, and the
+        //                             staged file is only an export copy
+        //   keep + retry:             failed, blocked
+        const PERMANENT_SKIPS = new Set([
+            "unsupported",
+            "zeroSize",
+            "tooLarge",
+            "largerThanAvailableStorage",
+        ]);
         const finish = (result: unknown, files: StagedFile[]): void => {
             const type =
                 result && typeof result === "object" && "type" in result
                     ? String((result as { type: unknown }).type)
                     : "unknown";
-            if (type === "alreadyUploaded" || type.startsWith("upload")) {
+            const names = files.map((f) => basename(f.path)).join(" + ");
+            if (type === "uploaded" || type === "uploadedWithStaticThumbnail") {
                 for (const f of files) rmSync(f.path, { force: true });
-                if (type === "alreadyUploaded") totals.present++;
-                else totals.uploaded++;
+                totals.uploaded++;
+            } else if (type === "alreadyUploaded" || type === "addedSymlink") {
+                for (const f of files) rmSync(f.path, { force: true });
+                totals.present++;
+            } else if (PERMANENT_SKIPS.has(type)) {
+                for (const f of files) rmSync(f.path, { force: true });
+                totals.skippedUnsupported++;
+                err(`waddle: – ${names} (${type}, skipped)`);
             } else {
                 for (const f of files)
                     attempts.set(f.path, (attempts.get(f.path) ?? 0) + 1);
                 totals.failed++;
-                err(
-                    `waddle: ✗ ${files.map((f) => basename(f.path)).join(" + ")} (${type})`,
-                );
+                err(`waddle: ✗ ${names} (${type})`);
             }
         };
         const failedCall = async (
@@ -367,7 +394,7 @@ const runSync = async (opts: Options): Promise<void> => {
     out(
         `waddle: ${totals.uploaded} uploaded (${totals.livePairs} live photo pairs), ` +
             `${totals.present} already present, ${totals.failed} failed, ` +
-            `${totals.skippedAae} .aae skipped, ${totals.chunks} chunk(s)`,
+            `${totals.skippedUnsupported + totals.skippedAae} skipped (${totals.skippedAae} .aae), ${totals.chunks} chunk(s)`,
     );
     if (remaining.length > 0) {
         out(
