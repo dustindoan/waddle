@@ -330,6 +330,16 @@ const runSync = async (opts: Options): Promise<void> => {
 
     const reportPath = join(opts.staging, "..", ".waddle-report.json");
     for (let chunk = 1; chunk <= opts.maxChunks; chunk++) {
+        // Drain before gating: draining only FREES disk (upload → delete),
+        // so it must run even under disk pressure — it's the way out of it.
+        const leftovers = stagedFiles(opts.staging);
+        if (leftovers.length > 0) {
+            err(`waddle: ${leftovers.length} leftover file(s) in staging`);
+            await drain(leftovers);
+        }
+
+        // The gate protects the export only: a chunk is the one thing that
+        // grows disk usage, and Photos hard-errors on disk-full.
         const free = await freeDiskGb(opts.staging);
         if (free < opts.minFreeGb) {
             err(
@@ -337,12 +347,6 @@ const runSync = async (opts: Options): Promise<void> => {
                     "Free some space and re-run; the export picks up where it left off.",
             );
             break;
-        }
-
-        const leftovers = stagedFiles(opts.staging);
-        if (leftovers.length > 0) {
-            err(`waddle: ${leftovers.length} leftover file(s) in staging`);
-            await drain(leftovers);
         }
 
         const result = await exportChunk({
@@ -398,7 +402,7 @@ const runSync = async (opts: Options): Promise<void> => {
     );
     if (remaining.length > 0) {
         out(
-            `waddle: ${remaining.length} file(s) left in staging (failed uploads): ${opts.staging}`,
+            `waddle: ${remaining.length} file(s) left in staging: ${opts.staging}`,
         );
         process.exit(1);
     }
