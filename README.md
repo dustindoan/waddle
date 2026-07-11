@@ -77,6 +77,10 @@ self-hosted museum (or rely on `duckling login`'s environment).
   (20/small, 5/medium, 1/large) is the planned fix.
 - No Photos.app wedge probe yet (interrupted AppleScript exports can leave
   Photos with phantom export tasks; quit and reopen Photos if exports hang).
+  Observed live: video-heavy stretches of an Optimize-Storage library can
+  exceed the default 600 s per-photo download window and enter a
+  timeout→killall→retry loop — run those with `--applescript-timeout 2400`
+  (the old migrator's large-tier value).
 - No `verify` command yet (manifest vs. ente completeness report — the
   trust gate before deleting originals from iCloud).
 - TOTP/passkey accounts: blocked on duckling's `login` support.
