@@ -40,6 +40,7 @@ import {
     matchAssets,
     photosInventory,
 } from "./plan.ts";
+import { runRepairDates } from "./repair.ts";
 
 const VERSION = "0.1.0";
 
@@ -553,6 +554,49 @@ const main = async (): Promise<void> => {
     }
     if (args[0] === "plan") {
         await runPlan(parsePlanArgs(args.slice(1)));
+        return;
+    }
+    if (args[0] === "repair-dates") {
+        const argv = args.slice(1);
+        let album = "";
+        let sinceMs = Date.now() - 30 * 86400 * 1000;
+        let dryRun = false;
+        let library: string | undefined;
+        for (let i = 0; i < argv.length; i++) {
+            const a = argv[i]!;
+            if (a === "--album") album = argv[++i] ?? "";
+            else if (a === "--since") {
+                const parsed = Date.parse(argv[++i] ?? "");
+                if (Number.isNaN(parsed)) {
+                    err("waddle: --since must be an ISO date");
+                    process.exit(2);
+                }
+                sinceMs = parsed;
+            } else if (a === "--dry-run") dryRun = true;
+            else if (a === "--library") library = argv[++i];
+            else {
+                err(`waddle: repair-dates: unknown option ${a}`);
+                process.exit(2);
+            }
+        }
+        if (!album) {
+            err(
+                "usage: waddle repair-dates --album <name> [--since <iso-date>] [--dry-run] [--library <path>]",
+            );
+            process.exit(2);
+        }
+        const [ducklingBin, osxphotosBin] = await Promise.all([
+            resolveDuckling(),
+            resolveOsxphotos(),
+        ]);
+        await runRepairDates({
+            album,
+            sinceMs,
+            dryRun,
+            library,
+            osxphotosBin,
+            ducklingBin,
+        });
         return;
     }
     if (args[0] !== "sync") {
