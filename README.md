@@ -46,9 +46,21 @@ Photos.app --osxphotos--> staging --duckling--> ente museum
 ## Use
 
 ```sh
-waddle sync --album "Photos"                 # migrate the system library
+# 1. Pre-download dedup (read-only, no iCloud): which assets aren't in ente?
+waddle plan                                  # → ~/.waddle/plan-uuids.txt
+
+# 2. Migrate only those. Skipped assets are never exported, so their
+#    iCloud originals are never downloaded.
+waddle sync --album "Photos" --uuid-file ~/.waddle/plan-uuids.txt
+
 waddle sync --album "Photos" --max-chunks 1 --chunk 20    # small test run
 ```
+
+`plan` matches by normalized filename + capture date (±26 h, tunable via
+`--epsilon-hours`); ambiguous assets (name matches, date doesn't) are
+exported to be safe — a wrong skip strands a photo, a wrong export costs
+one download that hash dedup absorbs. On an Optimize-Mac-Storage library
+this is the difference between downloading ~4k originals and ~30k.
 
 Options: `--library <path>`, `--staging <dir>` (default `~/.waddle/staging`),
 `--chunk <n>` (default 100), `--min-free-gb <n>` (default 20),
