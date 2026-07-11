@@ -62,6 +62,10 @@ export interface ChunkOptions {
     applescriptTimeoutSecs: number;
     library?: string;
     reportPath: string;
+    /** Restrict the export to these asset UUIDs (a `waddle plan` output).
+     * Combines with --update/--only-new: the export db still tracks
+     * progress within the UUID set across chunks. */
+    uuidFile?: string;
 }
 
 export interface ChunkResult {
@@ -93,6 +97,7 @@ export const exportChunk = async (
         "--verbose",
     ];
     if (opts.library) args.push("--library", opts.library);
+    if (opts.uuidFile) args.push("--uuid-from-file", opts.uuidFile);
 
     err(`waddle: osxphotos export (limit ${opts.limit}) …`);
     const proc = Bun.spawn({

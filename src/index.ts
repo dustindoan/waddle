@@ -18,7 +18,13 @@
 // Output discipline: results/summary on stdout; progress, osxphotos and
 // duckling chatter on stderr.
 
-import { existsSync, mkdirSync, rmSync, statSync } from "node:fs";
+import {
+    existsSync,
+    mkdirSync,
+    rmSync,
+    statSync,
+    writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import {
@@ -28,6 +34,12 @@ import {
 } from "./duckling-client.ts";
 import { exportChunk, resolveOsxphotos, stagedFiles } from "./osxphotos.ts";
 import { clusterLivePhotos, type StagedFile } from "./pairing.ts";
+import {
+    buildEnteIndex,
+    DEFAULT_EPSILON_HOURS,
+    matchAssets,
+    photosInventory,
+} from "./plan.ts";
 
 const VERSION = "0.1.0";
 
@@ -51,6 +63,7 @@ interface Options {
     maxChunks: number;
     rotateEvery: number;
     applescriptTimeoutSecs: number;
+    uuidFile?: string;
 }
 
 interface Totals {
@@ -67,7 +80,10 @@ const usage = (): void => {
     err("waddle — Photos.app → ente migration orchestrator");
     err("");
     err("Usage:");
-    err("  waddle sync --album <name> [options]");
+    err("  waddle plan [--out <file>] [--epsilon-hours <n>] [--library <path>]");
+    err("      pre-download dedup: find assets NOT already in ente (by name +");
+    err("      capture date) and write their UUIDs — no iCloud downloads");
+    err("  waddle sync --album <name> [--uuid-file <plan-output>] [options]");
     err("");
     err("Options:");
     err("  --album <name>          target ente album (created if missing; required)");
@@ -135,6 +151,9 @@ const parseArgs = (argv: string[]): Options => {
             case "--applescript-timeout":
                 opts.applescriptTimeoutSecs = takeNumber(a, argv[++i]);
                 break;
+            case "--uuid-file":
+                opts.uuidFile = takeValue(a, argv[++i]);
+                break;
             default:
                 err(`waddle: unknown option ${a}`);
                 process.exit(2);
@@ -161,6 +180,101 @@ const freeDiskGb = async (dir: string): Promise<number> => {
     if (!Number.isFinite(availKb))
         throw new Error(`could not parse df output for ${dir}`);
     return availKb / 1024 / 1024;
+};
+
+interface PlanOptions {
+    library?: string;
+    out: string;
+    epsilonHours: number;
+}
+
+const parsePlanArgs = (argv: string[]): PlanOptions => {
+    const opts: PlanOptions = {
+        out: join(homedir(), ".waddle", "plan-uuids.txt"),
+        epsilonHours: DEFAULT_EPSILON_HOURS,
+    };
+    for (let i = 0; i < argv.length; i++) {
+        const a = argv[i]!;
+        switch (a) {
+            case "--library":
+                opts.library = argv[++i] ?? "";
+                break;
+            case "--out":
+                opts.out = argv[++i] ?? "";
+                break;
+            case "--epsilon-hours": {
+                const n = Number(argv[++i]);
+                if (!Number.isFinite(n) || n <= 0) {
+                    err("waddle: --epsilon-hours must be a positive number");
+                    process.exit(2);
+                }
+                opts.epsilonHours = n;
+                break;
+            }
+            default:
+                err(`waddle: plan: unknown option ${a}`);
+                process.exit(2);
+        }
+    }
+    if (!opts.out) {
+        err("waddle: --out needs a value");
+        process.exit(2);
+    }
+    return opts;
+};
+
+/** Pre-download dedup: intersect the Photos inventory (local SQLite, no
+ * iCloud) with the ente inventory (via duckling) and write the UUIDs of
+ * assets worth exporting. Read-only on both sides. */
+const runPlan = async (opts: PlanOptions): Promise<void> => {
+    if (!existsSync(ducklingSessionPath())) {
+        err(`waddle: no duckling session at ${ducklingSessionPath()}`);
+        err("waddle: run `duckling login` first");
+        process.exit(1);
+    }
+    const [ducklingBin, osxphotosBin] = await Promise.all([
+        resolveDuckling(),
+        resolveOsxphotos(),
+    ]);
+
+    err("waddle: reading Photos inventory (local database only) …");
+    const assets = await photosInventory(osxphotosBin, opts.library);
+    err(`waddle: ${assets.length} assets in Photos`);
+
+    err("waddle: reading ente inventory …");
+    const client = new DucklingClient(ducklingBin);
+    const collections = await client.start();
+    const enteFiles: { name: string; creationTime?: number }[] = [];
+    for (const c of collections) {
+        const res = (await client.call(
+            "collections.list_files",
+            { id: c.id },
+            600_000,
+        )) as { files: { name: string; creationTime?: number }[] };
+        err(`waddle:   ${c.name}: ${res.files.length} file(s)`);
+        enteFiles.push(...res.files);
+    }
+    await client.stop();
+
+    const result = matchAssets(
+        assets,
+        buildEnteIndex(enteFiles),
+        opts.epsilonHours,
+    );
+
+    mkdirSync(join(opts.out, ".."), { recursive: true });
+    writeFileSync(opts.out, result.toMigrate.join("\n") + "\n");
+
+    out(
+        `${assets.length} assets in Photos · ${enteFiles.length} file entries in ente`,
+    );
+    out(
+        `${result.matched} already in ente (skipped) · ${result.unmatched} not in ente · ` +
+            `${result.ambiguous} ambiguous (name matched, date didn't — exporting to be safe)`,
+    );
+    out(`${result.toMigrate.length} to migrate → ${opts.out}`);
+    out("");
+    out(`next: waddle sync --album <name> --uuid-file ${opts.out}`);
 };
 
 const runSync = async (opts: Options): Promise<void> => {
@@ -356,6 +470,7 @@ const runSync = async (opts: Options): Promise<void> => {
             applescriptTimeoutSecs: opts.applescriptTimeoutSecs,
             library: opts.library,
             reportPath,
+            uuidFile: opts.uuidFile,
         });
         totals.chunks++;
 
@@ -417,6 +532,10 @@ const main = async (): Promise<void> => {
     if (args.length === 0 || args.includes("--help")) {
         usage();
         process.exit(args.length === 0 ? 2 : 0);
+    }
+    if (args[0] === "plan") {
+        await runPlan(parsePlanArgs(args.slice(1)));
+        return;
     }
     if (args[0] !== "sync") {
         err(`waddle: unknown command "${args[0]}" — see waddle --help`);
