@@ -81,8 +81,19 @@ self-hosted museum (or rely on `duckling login`'s environment).
   trust gate before deleting originals from iCloud).
 - TOTP/passkey accounts: blocked on duckling's `login` support.
 
-## Build
+## Build & test
 
 ```sh
 bun install && bun run typecheck && bun run build   # → dist/waddle
+bun test    # unit + integration (mock duckling/osxphotos; no Photos, no museum)
 ```
+
+The integration suite drives the real sync loop against scriptable test
+doubles: every upload-result classification, retry caps, worker rotation
+and crash/timeout recovery, resume-from-leftovers, the disk gate, and
+plan-driven `--uuid-file` narrowing.
+
+## License
+
+MIT. (waddle only orchestrates the `osxphotos` and `duckling` binaries;
+duckling itself is AGPL-3.0 because it embeds ente's client code.)
