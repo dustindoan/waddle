@@ -92,6 +92,11 @@ export const exportChunk = async (
         "--download-missing",
         "--applescript-timeout",
         String(opts.applescriptTimeoutSecs),
+        // mtime = capture date. This is the date channel for files that
+        // can't carry EXIF (gif/bmp/EXIF-less jpg): ente's uploader falls
+        // back to file mtime, which without this flag is the EXPORT time —
+        // observed live as a batch of 2005-era files dated "today".
+        "--touch-file",
         "--report",
         opts.reportPath,
         "--verbose",
