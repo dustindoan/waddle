@@ -47,8 +47,11 @@ const out = (s: string): void => void process.stdout.write(s + "\n");
 const err = (s: string): void => void process.stderr.write(s + "\n");
 
 /** Per-upload ceiling before we declare the worker wedged and rotate.
- * Sized for a multi-GB video over a ~18 Mbps uplink, with margin. */
-const UPLOAD_TIMEOUT_MS = 45 * 60 * 1000;
+ * Sized for a multi-GB video over a slow uplink, with margin. Env override
+ * exists for the integration tests (and emergencies), not for tuning. */
+const UPLOAD_TIMEOUT_MS = Number(
+    process.env.WADDLE_UPLOAD_TIMEOUT_MS ?? 45 * 60 * 1000,
+);
 
 /** Give up on a staged file after this many failed upload attempts; it
  * stays in staging and is reported at the end. */
@@ -307,6 +310,9 @@ const runSync = async (opts: Options): Promise<void> => {
         chunks: 0,
     };
     const attempts = new Map<string, number>();
+    // totals.failed counts distinct files (a file retried twice is one
+    // failure in the summary, not two).
+    const failedPaths = new Set<string>();
     let zeroProgressStreak = 0;
 
     const maybeRotate = async (): Promise<void> => {
@@ -376,9 +382,11 @@ const runSync = async (opts: Options): Promise<void> => {
                 totals.skippedUnsupported++;
                 err(`waddle: – ${names} (${type}, skipped)`);
             } else {
-                for (const f of files)
+                for (const f of files) {
                     attempts.set(f.path, (attempts.get(f.path) ?? 0) + 1);
-                totals.failed++;
+                    failedPaths.add(f.path);
+                }
+                totals.failed = failedPaths.size;
                 err(`waddle: ✗ ${names} (${type})`);
             }
         };
@@ -387,14 +395,24 @@ const runSync = async (opts: Options): Promise<void> => {
             files: StagedFile[],
         ): Promise<void> => {
             const msg = e instanceof Error ? e.message : String(e);
-            for (const f of files)
+            for (const f of files) {
                 attempts.set(f.path, (attempts.get(f.path) ?? 0) + 1);
-            totals.failed++;
+                failedPaths.add(f.path);
+            }
+            totals.failed = failedPaths.size;
             err(
                 `waddle: ✗ ${files.map((f) => basename(f.path)).join(" + ")}: ${msg}`,
             );
-            if (msg.includes("timed out")) {
-                err("waddle: upload timed out — rotating duckling");
+            // A wedged worker (timeout) or a dead one (crash) poisons every
+            // subsequent call — without a respawn, one duckling death would
+            // fast-fail the entire remaining run. Rotate on either.
+            if (
+                msg.includes("timed out") ||
+                msg.includes("duckling exited") ||
+                msg.includes("duckling not running") ||
+                msg.includes("duckling worker stopped")
+            ) {
+                err("waddle: worker unusable — rotating duckling");
                 await client.rotate();
             }
         };
