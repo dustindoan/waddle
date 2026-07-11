@@ -71,6 +71,7 @@ const runSync = (opts: RunOpts = {}): Run => {
                 WADDLE_DUCKLING_PATH: MOCK_DUCKLING,
                 WADDLE_OSXPHOTOS_PATH: MOCK_OSXPHOTOS,
                 MOCK_EXPORT_POOL: pool,
+                WADDLE_SKIP_PHOTOS_PROBE: "1",
                 MOCK_SPAWN_LOG: spawnLog,
                 ...(opts.env ?? {}),
             },

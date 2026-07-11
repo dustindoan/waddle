@@ -32,7 +32,12 @@ import {
     ducklingSessionPath,
     resolveDuckling,
 } from "./duckling-client.ts";
-import { exportChunk, resolveOsxphotos, stagedFiles } from "./osxphotos.ts";
+import {
+    ensurePhotosResponsive,
+    exportChunk,
+    resolveOsxphotos,
+    stagedFiles,
+} from "./osxphotos.ts";
 import { clusterLivePhotos, type StagedFile } from "./pairing.ts";
 import {
     buildEnteIndex,
@@ -481,6 +486,11 @@ const runSync = async (opts: Options): Promise<void> => {
             );
             break;
         }
+
+        // A wedged Photos doesn't fail exports — it hollows them out
+        // (every cloud-only photo "skipping missing original"). Probe and
+        // self-heal before each chunk drives it.
+        await ensurePhotosResponsive();
 
         const result = await exportChunk({
             bin: osxphotosBin,

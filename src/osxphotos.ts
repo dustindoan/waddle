@@ -46,6 +46,53 @@ export const resolveOsxphotos = async (): Promise<string> => {
     );
 };
 
+/** The coralstack-migrator's 5-second wedge probe, inherited: an
+ * unresponsive Photos.app doesn't fail exports loudly — osxphotos just
+ * "skips missing original" on every cloud-only photo and the chunk runs
+ * hollow. Observed live twice. */
+const photosResponsive = async (): Promise<boolean> => {
+    const proc = Bun.spawn({
+        cmd: [
+            "/usr/bin/osascript",
+            "-e",
+            'with timeout of 5 seconds\ntell application "Photos" to get name\nend timeout',
+        ],
+        stdout: "ignore",
+        stderr: "ignore",
+    });
+    return (await proc.exited) === 0;
+};
+
+/**
+ * Probe Photos before driving it; if wedged, restart it and wait (up to
+ * 10 min) for it to answer again. Throws if it never comes back — better
+ * a loud stop than a 29k-photo hollow scan. Skipped when
+ * WADDLE_SKIP_PHOTOS_PROBE=1 (integration tests use mock osxphotos; no
+ * real Photos to probe).
+ */
+export const ensurePhotosResponsive = async (): Promise<void> => {
+    if (process.env.WADDLE_SKIP_PHOTOS_PROBE === "1") return;
+    if (await photosResponsive()) return;
+    err("waddle: Photos.app not answering AppleScript — restarting it");
+    Bun.spawnSync({ cmd: ["/usr/bin/killall", "Photos"] });
+    await Bun.sleep(3000);
+    Bun.spawnSync({ cmd: ["/usr/bin/killall", "-9", "Photos"] });
+    await Bun.sleep(2000);
+    Bun.spawnSync({ cmd: ["/usr/bin/open", "-a", "Photos"] });
+    const deadline = Date.now() + 10 * 60_000;
+    while (Date.now() < deadline) {
+        await Bun.sleep(15_000);
+        if (await photosResponsive()) {
+            err("waddle: Photos.app responsive again");
+            return;
+        }
+    }
+    throw new Error(
+        "Photos.app still unresponsive after a restart and 10 minutes — " +
+            "check it manually (phantom export tasks?), then re-run",
+    );
+};
+
 /** Regular files in staging, ignoring dotfiles (export db, .DS_Store). */
 export const stagedFiles = (staging: string): string[] => {
     if (!existsSync(staging)) return [];
